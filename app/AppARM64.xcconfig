@@ -4,7 +4,7 @@
 
 // ARM64 app release version, independent of inherited non-ARM64 targets.
 MARKETING_VERSION = 1.1.2
-CURRENT_PROJECT_VERSION = 910
+CURRENT_PROJECT_VERSION = 911
 LINUXRUNNER_DIAGNOSTIC = NO
 
 // LinuxRunner identity and native environment manager. Override root bundle

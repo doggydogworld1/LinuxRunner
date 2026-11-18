@@ -442,7 +442,7 @@ if [ "$native_xorg" = 1 ]; then
 fi
 [ "$x_ready" = 1 ] || { echo 'GUI_SESSION: X server failed or timed out'; cat "$session/xvfb.log"; exit 4; }
 echo "GUI_SESSION: root=${LINUXRUNNER_ENVIRONMENT:-current} distribution=$distro DISPLAY=$DISPLAY geometry=${width}x${height} backend=$(cat "$session/display-backend") interpreter-baseline"
-echo "GUI_SESSION: stage=x11-ready socket=/tmp/.X11-unix/X$display polls=$i"
+echo "GUI_SESSION: stage=x11-ready socket=/tmp/.X11-unix/X$display"
 lr_stage display_init "server=$(cat "$session/display-backend")"
 if [ "$mode" != desktop ]; then
 # Session-wide focus policy for all X11 clients; no app-name/key special cases.
