@@ -889,8 +889,17 @@ static const NSInteger LRDockPortraitOnlyTag=7803;   // DeX, Settings, More, Pow
     if(g==_twoFingerScroll)[self finishTwoFingerRecognizer:g other:_viewportPinch];
 }
 - (void)wheel:(UIPanGestureRecognizer *)g{[self countInput:@"uikit.scroll"];if(!lr_pointer_use_uikit_wheel(CACurrentMediaTime(),_lastGCScroll))return;[self scroll:g];}
-- (void)hover:(UIHoverGestureRecognizer *)g{[self countInput:@"uikit.hover"];if(!_sawHover){_sawHover=YES;[self refreshPointerMode];}
-    if(!_pointerTouch&&[self position:[g locationInView:self]])[self sendPointerFromEventTime:CACurrentMediaTime() buttons:_mouseButtons];}
+- (void)hover:(UIHoverGestureRecognizer *)g {
+    [self countInput:@"uikit.hover"];
+    // Hover exits and the controls outside the desktop do not move the guest pointer.
+    if(g.state!=UIGestureRecognizerStateBegan&&g.state!=UIGestureRecognizerStateChanged)return;
+    CGPoint point=[g locationInView:self];
+    if(!CGRectContainsPoint(_image.frame,point))return;
+    if(!_sawHover){_sawHover=YES;[self refreshPointerMode];}
+    if(!_pointerTouch&&[self position:point]){
+        [self sendPointerFromEventTime:CACurrentMediaTime() buttons:_mouseButtons];
+    }
+}
 - (void)rightMouse:(UITapGestureRecognizer *)g{[self countInput:@"uikit.secondary-click"];if(_pointerModeActive)return;[self click:4 at:[g locationInView:self]];}
 @end
 

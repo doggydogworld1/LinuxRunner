@@ -1,0 +1,71 @@
+name: Build LinuxRunner pointer test IPA
+
+on:
+  push:
+    branches:
+      - fix/bluetooth-pointer-leave-viewer
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pointer-test-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: xcode-27
+    timeout-minutes: 45
+    env:
+      ARTIFACT_NAME: LinuxRunner-Pointer-Test
+      BUNDLE_ID: dev.linuxrunner.pointertest
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+    steps:
+      - name: Checkout patched source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prepare Xcode and build dependencies
+        run: |
+          developer_dir="$(xcode-select -p)"
+          if [[ -d /Applications/Xcode_27.2.app/Contents/Developer ]]; then
+            developer_dir=/Applications/Xcode_27.2.app/Contents/Developer
+          fi
+          echo "DEVELOPER_DIR=$developer_dir" >> "$GITHUB_ENV"
+          for tool in meson ninja cmake pkgconf lld; do
+            case "$tool" in
+              lld) command_name=ld.lld ;;
+              pkgconf) command_name=pkg-config ;;
+              *) command_name="$tool" ;;
+            esac
+            if ! command -v "$command_name" >/dev/null; then
+              brew install "$tool"
+            fi
+          done
+          echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
+          git submodule update --init --recursive --checkout -- deps/libapps deps/libarchive deps/glslang deps/spirv-cross
+
+      - name: Run portable pointer tests
+        run: |
+          cc -I app/LinuxRunner tests/linuxrunner/input/pointer_policy_test.c -o "$RUNNER_TEMP/pointer-policy"
+          "$RUNNER_TEMP/pointer-policy"
+          cc -I . tests/linuxrunner/gui/viewport_test.c app/LinuxRunner/RFBProtocol.c -o "$RUNNER_TEMP/viewport"
+          "$RUNNER_TEMP/viewport"
+
+      - name: Build and verify the IPA
+        run: |
+          scripts/build-ipa.sh --unsigned
+          LINUXRUNNER_VERIFY_SOURCE_TREE="$PWD" LINUXRUNNER_EXPECTED_SOURCE_COMMIT="$GITHUB_SHA" \
+            python3 scripts/verify-ipa.py build/releases
+
+      - name: Upload the SideStore build
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: LinuxRunner-Pointer-Test
+          path: |
+            build/releases/LinuxRunner-Pointer-Test.ipa
+            build/releases/LinuxRunner-Pointer-Test.ipa.sha256
+            build/releases/artifact-verification.json
+          if-no-files-found: error
+          retention-days: 14

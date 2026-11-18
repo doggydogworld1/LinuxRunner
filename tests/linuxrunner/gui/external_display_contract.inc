@@ -68,6 +68,55 @@ static NSDictionary *LRMeasureHiddenFramePresentation(void) {
 - (void)key:(uint32_t)symbol down:(BOOL)down { [self.events addObject:@[@(symbol),@(down)]]; }
 - (void)typeKeysyms:(const uint32_t *)symbols count:(size_t)count { for(size_t i=0;i<count;i++){[self key:symbols[i] down:YES];[self key:symbols[i] down:NO];} }
 @end
+@interface LRHoverContractGesture : UIHoverGestureRecognizer
+@property UIGestureRecognizerState testState;
+@property CGPoint testLocation;
+@end
+@implementation LRHoverContractGesture
+- (UIGestureRecognizerState)state{return self.testState;}
+- (CGPoint)locationInView:(UIView *)view{(void)view;return self.testLocation;}
+@end
+
+static NSDictionary *LRHoverViewportContract(void) {
+    LRFramebufferView *surface=[LRFramebufferView new];
+    surface.frame=CGRectMake(0,0,390,844);
+    LRInputRecordingClient *client=[[LRInputRecordingClient alloc] initWithPort:0 password:@""];
+    client.events=[NSMutableArray new];
+    surface.client=client;
+    surface.pixelWidth=960;
+    surface.pixelHeight=540;
+    surface.image.frame=CGRectMake(0,0,384,216);
+
+    LRHoverContractGesture *hover=[LRHoverContractGesture new];
+    hover.testState=UIGestureRecognizerStateBegan;
+    hover.testLocation=CGPointMake(192,108);
+    [surface hover:hover];
+    BOOL entered=[client.events isEqualToArray:@[@[@480,@270,@0]]];
+
+    hover.testState=UIGestureRecognizerStateChanged;
+    const CGPoint outside[]={{-1,108},{385,108},{192,-1},{192,217}};
+    for(NSUInteger i=0;i<sizeof(outside)/sizeof(outside[0]);i++){
+        hover.testLocation=outside[i];
+        [surface hover:hover];
+    }
+    BOOL bounded=client.events.count==1&&surface.pointerX==480&&surface.pointerY==270;
+
+    hover.testLocation=CGPointZero;
+    hover.testState=UIGestureRecognizerStateEnded;
+    [surface hover:hover];
+    hover.testState=UIGestureRecognizerStateCancelled;
+    [surface hover:hover];
+    BOOL exitIgnored=client.events.count==1&&surface.pointerX==480&&surface.pointerY==270;
+
+    hover.testState=UIGestureRecognizerStateBegan;
+    hover.testLocation=CGPointMake(96,54);
+    [surface hover:hover];
+    BOOL reentered=client.events.count==2&&[client.events.lastObject isEqual:@[@240,@135,@0]];
+    return @{@"status":entered&&bounded&&exitIgnored&&reentered?@"PASS":@"FAIL",
+             @"hover_inside":@(entered),@"outside_ignored":@(bounded),
+             @"exit_ignored":@(exitIgnored),@"hover_reentry":@(reentered)};
+}
+
 // Synthetic UIKit press objects exercise the production HID/layout mapper;
 // they do not substitute for Magic Keyboard/Bluetooth/USB hardware testing.
 @interface LRKeyboardContractKey : UIKey
@@ -241,6 +290,7 @@ static void LRRunExternalDisplayContract(void (^completion)(NSDictionary *)) {
 #endif
     result[@"trackpad_dropdown"]=LRTrackpadMenuContractResult();
     result[@"landscape_viewport"]=LRLandscapeViewportContract();
+    result[@"hover_viewport"]=LRHoverViewportContract();
     result[@"hardware_keyboard"]=LRHardwareKeyboardContract();
     result[@"surface_observers_owned"]=@(observersOwned);result[@"surface_released"]=@(releasedSurface==nil);
     NSMutableData *first=[NSMutableData dataWithLength:16*16*4];memset(first.mutableBytes,11,first.length);
@@ -274,7 +324,7 @@ static void LRRunExternalDisplayContract(void (^completion)(NSDictionary *)) {
                 }
 #endif
                 NSDictionary *touchpad=LRTouchpadContract();result[@"touchpad"]=touchpad;
-                passed=passed&&[touchpad[@"status"] isEqual:@"PASS"]&&[result[@"trackpad_dropdown"][@"status"] isEqual:@"PASS"]&&[result[@"landscape_viewport"][@"status"] isEqual:@"PASS"]&&[result[@"hardware_keyboard"][@"status"] isEqual:@"PASS"];
+                passed=passed&&[touchpad[@"status"] isEqual:@"PASS"]&&[result[@"trackpad_dropdown"][@"status"] isEqual:@"PASS"]&&[result[@"landscape_viewport"][@"status"] isEqual:@"PASS"]&&[result[@"hover_viewport"][@"status"] isEqual:@"PASS"]&&[result[@"hardware_keyboard"][@"status"] isEqual:@"PASS"];
                 result[@"status"]=passed?@"PASS":@"FAIL";
                 if(original)[NSUserDefaults.standardUserDefaults setObject:original forKey:LRExternalDisplayEnabledKey];else [NSUserDefaults.standardUserDefaults removeObjectForKey:LRExternalDisplayEnabledKey];
                 // Keep output enabled while measuring; restore the saved setting afterwards.
