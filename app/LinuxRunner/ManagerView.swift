@@ -1929,6 +1929,7 @@ private struct DesktopControlSettings: View {
     @AppStorage("LinuxRunnerInput.touchpadGain") private var touchpadGain = 1.5
     @AppStorage("LinuxRunnerInput.mouseGain") private var mouseGain = 1.0
     @AppStorage("LinuxRunnerInput.captureMouse") private var captureMouse = false
+    @AppStorage("LinuxRunnerDesktop.protectControls") private var protectControls = false
     @AppStorage("LinuxRunnerInput.scrollGain") private var scrollGain = 1.0
     @AppStorage("LinuxRunnerDesktop.portraitTouchpad") private var portraitTouchpad = true
     private let tick = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
@@ -1986,6 +1987,10 @@ private struct DesktopControlSettings: View {
                     Toggle("Capture Mouse in Linux", isOn: $captureMouse)
                     if captureMouse {
                         Text("With a Bluetooth mouse connected, turn off iOS AssistiveTouch to use capture. Use touch to open these controls and turn capture off.").font(.caption).foregroundColor(.secondary)
+                    }
+                    Toggle("Protect Settings and Exit", isOn: $protectControls)
+                    if protectControls {
+                        Text("Touch and hold the gear or power icon in the desktop toolbar to show its menu.").font(.caption).foregroundColor(.secondary)
                     }
                     Text("Scrolling sensitivity: \(scrollGain, specifier: "%.2g")×").font(.caption)
                     Slider(value: $scrollGain, in: 0.25...4, step: 0.25).accessibilityLabel("Scrolling sensitivity")
