@@ -207,7 +207,7 @@ static id<LRCursorDisplay> LRExternalCursorDisplay(void);
 @property(weak) UITouch *pointerTouch;
 @property uint8_t pointerTouchButton;
 @property uint8_t lastSentPointerButtons;
-@property BOOL sawIndirectPointer,sawHover,pointerModeActive;
+@property BOOL sawIndirectPointer,sawHover,pointerModeActive,mouseCaptureActive;
 @property CFTimeInterval lastGCScroll;
 @property NSMutableDictionary<NSString *,NSNumber *> *inputCounts;
 @property NSMutableArray *inputObservers;
@@ -229,6 +229,8 @@ static id<LRCursorDisplay> LRExternalCursorDisplay(void);
 - (void)fitViewport;
 - (void)actualViewport;
 - (void)releaseInput;
+- (LRPointerEnvironment)pointerEnvironment;
+- (void)refreshPointerMode;
 - (void)focusKeyboard;
 - (void)relativeMoveX:(CGFloat)x y:(CGFloat)y;
 - (void)updateCursor;
@@ -287,7 +289,7 @@ static const NSInteger LRDockPortraitOnlyTag=7803;   // DeX, Settings, More, Pow
     UITapGestureRecognizer *two=[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(padRightTap:)];two.numberOfTouchesRequired=2;
     UIPanGestureRecognizer *scroll=[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(padScroll:)];scroll.minimumNumberOfTouches=2;scroll.maximumNumberOfTouches=2;
     [two requireGestureRecognizerToFail:scroll];
-    for(UIGestureRecognizer *g in @[move,tap,hold,two,scroll]){g.delaysTouchesEnded=NO;[_portraitPad addGestureRecognizer:g];}
+    for(UIGestureRecognizer *g in @[move,tap,hold,two,scroll]){g.delaysTouchesEnded=NO;g.delegate=self;[_portraitPad addGestureRecognizer:g];}
     __weak typeof(self) weakSelf=self;
     // Only the software keyboard counts: a hardware keyboard reports a tiny or off-screen frame.
     [_inputObservers addObject:[NSNotificationCenter.defaultCenter addObserverForName:UIKeyboardWillChangeFrameNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n){
@@ -362,6 +364,8 @@ static const NSInteger LRDockPortraitOnlyTag=7803;   // DeX, Settings, More, Pow
 }
 // Desktop-surface recognizers never see touches that start on the pad or on a control.
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldReceiveTouch:(UITouch *)touch{
+    BOOL mouseTouch=touch.type==UITouchTypeIndirectPointer||touch.type==UITouchTypeIndirect;
+    if(mouseTouch&&lr_pointer_capture_active([self pointerEnvironment]))return NO;
     if(g.view!=self)return YES;
     if(_portraitPadActive&&[touch.view isDescendantOfView:_portraitPad])return NO;
     // The control pill and its handle own their touches (menus included).
@@ -719,12 +723,19 @@ static const NSInteger LRDockPortraitOnlyTag=7803;   // DeX, Settings, More, Pow
     NSString *mode=[NSUserDefaults.standardUserDefaults stringForKey:@"LinuxRunnerInput.mouseMode"];
     return (LRPointerEnvironment){.mode=[mode isEqual:@"touch"]?LR_MOUSE_MODE_TOUCH:[mode isEqual:@"pointer"]?LR_MOUSE_MODE_POINTER:LR_MOUSE_MODE_AUTO,
         .assistive_touch=UIAccessibilityIsAssistiveTouchRunning(),.gc_mouse=GCMouse.mice.count>0,.indirect_pointer=_sawIndirectPointer,.hover=_sawHover,
-        .uikit_pointer_platform=UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPad};
+        .uikit_pointer_platform=UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPad,
+        .capture_requested=_desktopControls&&[NSUserDefaults.standardUserDefaults boolForKey:@"LinuxRunnerInput.captureMouse"]};
 }
 // Pointer mode: single-finger gestures off (no tap/long-press delays); a touch
 // is a mouse button press at its exact position. Two-finger scroll and zoom stay.
 - (void)refreshPointerMode{
     LRPointerEnvironment e=[self pointerEnvironment];BOOL active=lr_pointer_mode(e);
+    BOOL capture=lr_pointer_capture_active(e);
+    if(capture!=_mouseCaptureActive){
+        if(_mouseButtons||_pointerTouchButton)[self releaseInput];
+        _mouseScroll=0;
+        _mouseCaptureActive=capture;
+    }
     _tapGesture.enabled=_dragGesture.enabled=_secondaryGesture.enabled=!active||_relativeTouchpad;
     for(UIGestureRecognizer *g in @[_tapGesture,_dragGesture,_secondaryGesture])
         g.allowedTouchTypes=_relativeTouchpad?@[@(UITouchTypeDirect),@(UITouchTypePencil)]:@[@(UITouchTypeDirect),@(UITouchTypeIndirect),@(UITouchTypePencil),@(UITouchTypeIndirectPointer)];
@@ -760,6 +771,7 @@ static const NSInteger LRDockPortraitOnlyTag=7803;   // DeX, Settings, More, Pow
     LRPointerEnvironment e=[self pointerEnvironment];NSMutableArray *mice=[NSMutableArray new];
     for(GCMouse *m in GCMouse.mice)[mice addObject:m.vendorName?:@"mouse"];
     return @{@"software_keyboard_requested":@(_softwareKeyboardRequested),@"pointer_mode":_pointerModeActive?@"on":@"off",@"mode_setting":@(e.mode),@"assistive_touch":@(e.assistive_touch),@"gc_mice":mice,
+        @"mouse_capture":@(lr_pointer_capture_active(e)),
         @"hardware_keyboard":@(GCKeyboard.coalescedKeyboard!=nil),@"keyboard_first_responder":@(self.isFirstResponder),
         @"indirect_pointer_seen":@(_sawIndirectPointer),@"hover_seen":@(_sawHover),@"counts":_inputCounts.copy,@"last_source":_lastInputSource?:@"none",
         @"pointer":[NSString stringWithFormat:@"%u,%u buttons=%u",_pointerX,_pointerY,_mouseButtons|_pointerTouchButton],
@@ -777,6 +789,8 @@ static const NSInteger LRDockPortraitOnlyTag=7803;   // DeX, Settings, More, Pow
     for(UITouch *t in touches)[self countInput:t.type==UITouchTypeIndirectPointer?@"uikit.touch.indirect-pointer":t.type==UITouchTypeDirect?@"uikit.touch.direct":t.type==UITouchTypePencil?@"uikit.touch.pencil":@"uikit.touch.indirect"];
     UITouch *t=touches.anyObject;_lastTouchDown=t.timestamp;
     if(t.type==UITouchTypeIndirectPointer&&!_sawIndirectPointer){_sawIndirectPointer=YES;[self refreshPointerMode];}
+    if((t.type==UITouchTypeIndirectPointer||t.type==UITouchTypeIndirect)&&
+       !lr_pointer_use_uikit_button([self pointerEnvironment],true,LR_POINTER_LEFT))return;
     if(_pointerModeActive&&(!_relativeTouchpad||t.type==UITouchTypeIndirectPointer)&&!_pointerTouch&&event.allTouches.count==1&&[self position:[t locationInView:self]]){
         BOOL indirect=t.type==UITouchTypeIndirectPointer;
         BOOL secondary=indirect&&(event.buttonMask&UIEventButtonMaskSecondary);
@@ -809,13 +823,18 @@ static const NSInteger LRDockPortraitOnlyTag=7803;   // DeX, Settings, More, Pow
     if(_pointerTouch&&[touches containsObject:_pointerTouch]){[self endPointerTouch:_pointerTouch];return;}
     [super touchesCancelled:touches withEvent:event];
 }
-- (BOOL)gcPressTargetsSurface {
+- (BOOL)gcInputTargetsViewer {
     if(!self.window.isKeyWindow||self.hidden||!_pixelWidth||!_pixelHeight)return NO;
     // Global GC callbacks must not click through a native settings sheet.
     for(UIResponder *r=self.nextResponder;r;r=r.nextResponder)if([r isKindOfClass:UIViewController.class]){
         UIViewController *controller=(UIViewController *)r;
         if(controller.presentedViewController||controller.isBeingDismissed)return NO;
     }
+    return YES;
+}
+- (BOOL)gcPressTargetsSurface {
+    if(![self gcInputTargetsViewer])return NO;
+    if(lr_pointer_capture_active([self pointerEnvironment]))return _client!=nil;
     CGRect image=_image.frame;
     CGPoint point=CGPointMake(image.origin.x+(CGFloat)_pointerX/_pixelWidth*image.size.width,
                              image.origin.y+(CGFloat)_pointerY/_pixelHeight*image.size.height);
@@ -834,7 +853,9 @@ static const NSInteger LRDockPortraitOnlyTag=7803;   // DeX, Settings, More, Pow
 - (void)sendMouse{if(_pixelWidth&&_pixelHeight)[self sendPointerFromEventTime:GCMouse.current.mouseInput.lastEventTimestamp buttons:_mouseButtons|_pointerTouchButton];}
 - (void)mouseMovedX:(float)dx y:(float)dy{
     [self countInput:@"gc.motion"];
-    if(!lr_pointer_use_gc_motion([self pointerEnvironment])){return;}
+    LRPointerEnvironment e=[self pointerEnvironment];
+    if(!lr_pointer_use_gc_motion(e))return;
+    if(lr_pointer_capture_active(e)&&(!_client||![self gcInputTargetsViewer]))return;
     if(!_pixelWidth||!_pixelHeight)return;
     // Device points to framebuffer pixels at the current zoom; GCMouse reports
     // upward motion as positive y.
@@ -851,6 +872,7 @@ static const NSInteger LRDockPortraitOnlyTag=7803;   // DeX, Settings, More, Pow
 }
 - (void)mouseWheel:(float)y{
     [self countInput:@"gc.scroll"];_lastGCScroll=CACurrentMediaTime();
+    if(lr_pointer_capture_active([self pointerEnvironment])&&(!_client||![self gcInputTargetsViewer]))return;
     _mouseScroll+=y*lr_input_gain([NSUserDefaults.standardUserDefaults doubleForKey:@"LinuxRunnerInput.scrollGain"],1);
     while(fabs(_mouseScroll)>=1){uint8_t wheel=_mouseScroll>0?8:16;_mouseScroll+=_mouseScroll>0?-1:1;
         [_client pointerX:_pointerX y:_pointerY buttons:_mouseButtons|wheel];[_client pointerX:_pointerX y:_pointerY buttons:_mouseButtons];}
@@ -888,7 +910,11 @@ static const NSInteger LRDockPortraitOnlyTag=7803;   // DeX, Settings, More, Pow
     CGPoint t=[g translationInView:self];if(_zoom>1.01&&g.allowedScrollTypesMask==0){_viewportOffset=CGPointMake(_viewportOffset.x+t.x,_viewportOffset.y+t.y);[g setTranslation:CGPointZero inView:self];[self setNeedsLayout];}else if(fabs(t.y)>=12/lr_input_gain([NSUserDefaults.standardUserDefaults doubleForKey:@"LinuxRunnerInput.scrollGain"],1)){[self click:t.y<0?16:8 at:[g locationInView:self]];[g setTranslation:CGPointZero inView:self];}
     if(g==_twoFingerScroll)[self finishTwoFingerRecognizer:g other:_viewportPinch];
 }
-- (void)wheel:(UIPanGestureRecognizer *)g{[self countInput:@"uikit.scroll"];if(!lr_pointer_use_uikit_wheel(CACurrentMediaTime(),_lastGCScroll))return;[self scroll:g];}
+- (void)wheel:(UIPanGestureRecognizer *)g{
+    [self countInput:@"uikit.scroll"];
+    if(lr_pointer_capture_active([self pointerEnvironment])||!lr_pointer_use_uikit_wheel(CACurrentMediaTime(),_lastGCScroll))return;
+    [self scroll:g];
+}
 - (void)hover:(UIHoverGestureRecognizer *)g {
     [self countInput:@"uikit.hover"];
     // Hover exits and the controls outside the desktop do not move the guest pointer.
@@ -896,7 +922,7 @@ static const NSInteger LRDockPortraitOnlyTag=7803;   // DeX, Settings, More, Pow
     CGPoint point=[g locationInView:self];
     if(!CGRectContainsPoint(_image.frame,point))return;
     if(!_sawHover){_sawHover=YES;[self refreshPointerMode];}
-    if(!_pointerTouch&&[self position:point]){
+    if(!lr_pointer_capture_active([self pointerEnvironment])&&!_pointerTouch&&[self position:point]){
         [self sendPointerFromEventTime:CACurrentMediaTime() buttons:_mouseButtons];
     }
 }
@@ -2289,6 +2315,7 @@ static UIButton *LRSquareButton(NSString *symbol,NSString *label,UIColor *tint){
 }
 - (void)installKeyboardControls{
     _surface.desktopControls=YES;
+    [_surface refreshPointerMode];
     UIButton *k=[UIButton buttonWithType:UIButtonTypeSystem];k.accessibilityIdentifier=@"GUI Keyboard";k.accessibilityLabel=@"Keyboard";
     [k setImage:[UIImage systemImageNamed:@"keyboard" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:17 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
     k.tintColor=UIColor.whiteColor;k.backgroundColor=[UIColor colorWithWhite:.18 alpha:.85];k.layer.cornerRadius=11;k.layer.cornerCurve=kCACornerCurveContinuous;

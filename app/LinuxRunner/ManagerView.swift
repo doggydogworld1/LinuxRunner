@@ -1928,6 +1928,7 @@ private struct DesktopControlSettings: View {
     @AppStorage("LinuxRunnerDesktop.externalDisplay") private var externalOutput = true
     @AppStorage("LinuxRunnerInput.touchpadGain") private var touchpadGain = 1.5
     @AppStorage("LinuxRunnerInput.mouseGain") private var mouseGain = 1.0
+    @AppStorage("LinuxRunnerInput.captureMouse") private var captureMouse = false
     @AppStorage("LinuxRunnerInput.scrollGain") private var scrollGain = 1.0
     @AppStorage("LinuxRunnerDesktop.portraitTouchpad") private var portraitTouchpad = true
     private let tick = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
@@ -1982,6 +1983,10 @@ private struct DesktopControlSettings: View {
                     Slider(value: $touchpadGain, in: 0.25...4, step: 0.25).accessibilityLabel("Touchpad sensitivity")
                     Text("Mouse sensitivity: \(mouseGain, specifier: "%.2g")×").font(.caption)
                     Slider(value: $mouseGain, in: 0.25...4, step: 0.25).accessibilityLabel("Mouse sensitivity")
+                    Toggle("Capture Mouse in Linux", isOn: $captureMouse)
+                    if captureMouse {
+                        Text("With a Bluetooth mouse connected, turn off iOS AssistiveTouch to use capture. Use touch to open these controls and turn capture off.").font(.caption).foregroundColor(.secondary)
+                    }
                     Text("Scrolling sensitivity: \(scrollGain, specifier: "%.2g")×").font(.caption)
                     Slider(value: $scrollGain, in: 0.25...4, step: 0.25).accessibilityLabel("Scrolling sensitivity")
                     NavigationLink("Keyboard & Terminal", destination: TerminalSettingsView())
@@ -2273,7 +2278,8 @@ private struct DevicesView: View {
         }
     }
     private var inputLines: [String] {
-        var lines = ["pointer mode: \(input["pointer_mode"] ?? "?")", "AssistiveTouch: \((input["assistive_touch"] as? Bool ?? false) ? "on" : "off")",
+        var lines = ["pointer mode: \(input["pointer_mode"] ?? "?")", "mouse capture: \((input["mouse_capture"] as? Bool ?? false) ? "active" : "off")",
+                     "AssistiveTouch: \((input["assistive_touch"] as? Bool ?? false) ? "on" : "off")",
                      "GameController mice: \(input["gc_mice"] ?? "none")", "latency (event → X11): \(input["latency_ms"] ?? "none")"]
         if let counts = input["counts"] as? [String: NSNumber] { lines += counts.keys.sorted().map { "\($0): \(counts[$0]!)" } }
         return lines

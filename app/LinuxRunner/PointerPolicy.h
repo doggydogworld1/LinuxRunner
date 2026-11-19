@@ -22,11 +22,19 @@ typedef struct {
     bool indirect_pointer;    // an indirect-pointer touch has been seen (iPad-style pointer)
     bool hover;               // UIKit hover events have been seen
     bool uikit_pointer_platform; // iPad supplies targeted indirect-pointer clicks
+    bool capture_requested;
 } LRPointerEnvironment;
+
+// Capture uses raw mouse events. AssistiveTouch synthesizes direct touches that
+// cannot be distinguished from finger touches, so it retains the normal path.
+static inline bool lr_pointer_capture_active(LRPointerEnvironment e) {
+    return e.capture_requested && e.gc_mouse && !e.assistive_touch;
+}
 
 // Pointer mode: one touch is the mouse (press on touch-down, move, release on
 // touch-up, at its exact position; no tap or long-press delays).
 static inline bool lr_pointer_mode(LRPointerEnvironment e) {
+    if (lr_pointer_capture_active(e)) return true;
     if (e.mode == LR_MOUSE_MODE_POINTER) return true;
     if (e.mode == LR_MOUSE_MODE_TOUCH) return false;
     return e.gc_mouse || e.assistive_touch || e.indirect_pointer;
@@ -35,20 +43,21 @@ static inline bool lr_pointer_mode(LRPointerEnvironment e) {
 // GCMouse relative motion moves the Linux pointer only when iOS shows no pointer
 // whose absolute position UIKit reports (otherwise the two would drift apart).
 static inline bool lr_pointer_use_gc_motion(LRPointerEnvironment e) {
-    return e.gc_mouse && !e.assistive_touch && !e.indirect_pointer && !e.hover;
+    return lr_pointer_capture_active(e) || (e.gc_mouse && !e.assistive_touch && !e.indirect_pointer && !e.hover);
 }
 
 // Presence does not prove a working button stream. UIKit owns absolute-pointer
 // clicks (including iPad Magic Keyboard); GC owns only a relative-only pointer.
 static inline bool lr_pointer_use_gc_button(LRPointerEnvironment e, int button) {
+    if (lr_pointer_capture_active(e)) return true;
     if (e.uikit_pointer_platform || e.indirect_pointer || e.hover) return false;
     if (button == LR_POINTER_LEFT && e.assistive_touch) return false;
     return e.gc_mouse;
 }
 
 static inline bool lr_pointer_use_uikit_button(LRPointerEnvironment e, bool indirect, int button) {
-    (void)e; (void)indirect; (void)button;
-    return true;
+    (void)button;
+    return !indirect || !lr_pointer_capture_active(e);
 }
 
 // Releases belong to the source that accepted the press, even if pointer

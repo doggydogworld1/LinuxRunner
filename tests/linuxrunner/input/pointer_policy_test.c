@@ -30,6 +30,22 @@ int main(void) {
     CHECK("iPad pointer without GCMouse: UIKit buttons", lr_pointer_use_uikit_button(ipad_no_gc, true, LR_POINTER_LEFT) && lr_pointer_use_uikit_button(ipad_no_gc, true, LR_POINTER_RIGHT));
     CHECK("connected mouse does not suppress finger/Pencil clicks", lr_pointer_use_uikit_button(ipad, false, LR_POINTER_LEFT));
     CHECK("AssistiveTouch owns the UIKit left click", lr_pointer_use_uikit_button(iphone_at, false, LR_POINTER_LEFT));
+    LRPointerEnvironment capture = {.capture_requested = true, .gc_mouse = true, .indirect_pointer = true, .hover = true};
+    CHECK("capture uses raw motion and buttons even after UIKit events",
+          lr_pointer_capture_active(capture) && lr_pointer_use_gc_motion(capture) &&
+          lr_pointer_forward_gc_button(capture, LR_POINTER_LEFT, true, false, true));
+    CHECK("capture ignores indirect UIKit clicks but preserves finger/Pencil clicks",
+          !lr_pointer_use_uikit_button(capture, true, LR_POINTER_LEFT) &&
+          lr_pointer_use_uikit_button(capture, false, LR_POINTER_LEFT));
+    CHECK("capture rejects presses outside the foreground viewer",
+          !lr_pointer_forward_gc_button(capture, LR_POINTER_LEFT, true, false, false));
+    capture.assistive_touch = true;
+    CHECK("AssistiveTouch restores normal pointer routing",
+          !lr_pointer_capture_active(capture) && !lr_pointer_use_gc_motion(capture) &&
+          lr_pointer_use_uikit_button(capture, true, LR_POINTER_LEFT));
+    capture.assistive_touch = false;
+    capture.gc_mouse = false;
+    CHECK("capture stays off without a raw mouse", !lr_pointer_capture_active(capture));
     CHECK("secondary mask is right button", lr_pointer_touch_button(true) == 4 && lr_pointer_touch_button(false) == 1);
     CHECK("UIKit wheel ignored right after GCMouse wheel", !lr_pointer_use_uikit_wheel(10.1, 10.0) && lr_pointer_use_uikit_wheel(10.5, 10.0));
     printf("POINTER_POLICY_TEST %s failures=%d\n", fails ? "FAIL" : "PASS", fails);
