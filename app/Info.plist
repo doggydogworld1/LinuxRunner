@@ -32,6 +32,8 @@
 	<string>$(PRODUCT_APP_GROUP_IDENTIFIER)</string>
 	<key>LinuxRunnerDiagnostic</key>
 	<string>$(LINUXRUNNER_DIAGNOSTIC)</string>
+	<key>LinuxRunnerDevBuild</key>
+	<string>$(LINUXRUNNER_DEV_BUILD)</string>
 	<key>LinuxRunnerRootfsSHA256</key>
 	<string>$(ROOTFS_SHA256)</string>
 	<key>LinuxRunnerSourceCommit</key>

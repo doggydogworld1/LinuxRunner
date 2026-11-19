@@ -1002,6 +1002,31 @@ static BOOL LRExternalOutputEnabled(void) {
     id value=[NSUserDefaults.standardUserDefaults objectForKey:LRExternalDisplayEnabledKey];
     return !value || [value boolValue]; // Preserve the existing automatic output default.
 }
+static void LRAddDevBuildBadge(UIView *view) {
+    NSBundle *bundle=NSBundle.mainBundle;
+    if(![[bundle objectForInfoDictionaryKey:@"LinuxRunnerDevBuild"] isEqual:@"YES"])return;
+
+    NSString *build=[bundle objectForInfoDictionaryKey:@"CFBundleVersion"] ?: @"?";
+    NSString *source=[bundle objectForInfoDictionaryKey:@"LinuxRunnerSourceCommit"] ?: @"";
+    NSString *revision=source.length>=7?[source substringToIndex:7]:@"local";
+    UILabel *badge=[UILabel new];
+    badge.text=[NSString stringWithFormat:@" DEV %@ · %@ ",build,revision];
+    badge.accessibilityLabel=[NSString stringWithFormat:@"Development build %@, source %@",build,revision];
+    badge.font=[UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightSemibold];
+    badge.textColor=UIColor.whiteColor;
+    badge.backgroundColor=[UIColor colorWithWhite:0.08 alpha:0.85];
+    badge.layer.cornerRadius=5;
+    badge.clipsToBounds=YES;
+    badge.userInteractionEnabled=NO;
+    badge.translatesAutoresizingMaskIntoConstraints=NO;
+    [view addSubview:badge];
+    [NSLayoutConstraint activateConstraints:@[
+        [badge.leadingAnchor constraintEqualToAnchor:view.safeAreaLayoutGuide.leadingAnchor constant:8],
+        [badge.topAnchor constraintEqualToAnchor:view.safeAreaLayoutGuide.topAnchor constant:4],
+        [badge.heightAnchor constraintGreaterThanOrEqualToConstant:22]
+    ]];
+}
+
 @interface LRExternalDisplayController : UIViewController <LRCursorDisplay>
 @property LRCursorOverlay *cursor;
 @property uint16_t cursorX,cursorY;
@@ -1034,7 +1059,7 @@ static id<LRCursorDisplay> LRExternalCursorDisplay(void){return LRCurrentExterna
     _placeholder.font=[UIFont systemFontOfSize:28 weight:UIFontWeightMedium];
     _placeholder.text=@"LinuxRunner\n\nOpen the Linux desktop on your iPhone or iPad to show it on this display.";
     [self.view addSubview:_placeholder];
-
+    LRAddDevBuildBadge(self.view);
 }
 - (void)viewDidAppear:(BOOL)animated{[super viewDidAppear:animated];[NSNotificationCenter.defaultCenter postNotificationName:LRExternalDisplayChangedNotification object:self];}
 - (void)dealloc{if(LRCurrentExternalDisplay==self)LRCurrentExternalDisplay=nil;}
@@ -1292,6 +1317,7 @@ static NSString *DesktopDegradedNotice(NSString *state);
     if(_desktopMode){
         _immersiveButton=[UIButton buttonWithType:UIButtonTypeSystem];[_immersiveButton setImage:[UIImage systemImageNamed:@"arrow.down.right.and.arrow.up.left"] forState:UIControlStateNormal];_immersiveButton.accessibilityLabel=@"Show Desktop Controls";_immersiveButton.backgroundColor=[UIColor colorWithWhite:.1 alpha:.8];_immersiveButton.layer.cornerRadius=16;_immersiveButton.translatesAutoresizingMaskIntoConstraints=NO;_immersiveButton.hidden=YES;[_immersiveButton addTarget:self action:@selector(toggleImmersive) forControlEvents:UIControlEventTouchUpInside];[self.view addSubview:_immersiveButton];[NSLayoutConstraint activateConstraints:@[[_immersiveButton.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:4],[_immersiveButton.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-8],[_immersiveButton.widthAnchor constraintEqualToConstant:32],[_immersiveButton.heightAnchor constraintEqualToConstant:32]]];
         _inputToolbar.hidden=YES;[self installKeyboardControls];
+        LRAddDevBuildBadge(self.view);
         for(UIView *v in _launchControls)v.hidden=YES;for(UIView*v in _compactControls)v.hidden=YES;_status.text=@"Open Desktop starts a real Linux window manager. The first start in an environment installs desktop support automatically (network required).";}
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(background) name:UIApplicationWillResignActiveNotification object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(foreground) name:UIApplicationDidBecomeActiveNotification object:nil];

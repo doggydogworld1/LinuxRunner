@@ -19,6 +19,7 @@ jobs:
     env:
       ARTIFACT_NAME: LinuxRunner-Pointer-Test
       BUNDLE_ID: dev.linuxrunner.pointertest
+      LINUXRUNNER_DEV_BUILD: 'YES'
       HOMEBREW_NO_AUTO_UPDATE: '1'
     steps:
       - name: Checkout patched source
@@ -58,6 +59,13 @@ jobs:
           scripts/build-ipa.sh --unsigned
           LINUXRUNNER_VERIFY_SOURCE_TREE="$PWD" LINUXRUNNER_EXPECTED_SOURCE_COMMIT="$GITHUB_SHA" \
             python3 scripts/verify-ipa.py build/releases
+          python3 - <<'PY'
+          import os, plistlib, zipfile
+          with zipfile.ZipFile(f"build/releases/{os.environ['ARTIFACT_NAME']}.ipa") as ipa:
+              info = plistlib.loads(ipa.read("Payload/LinuxRunner.app/Info.plist"))
+          assert info["LinuxRunnerDevBuild"] == "YES", "Dev badge is disabled"
+          assert info["CFBundleDisplayName"] == f"LR Dev {info['CFBundleVersion']}", "Dev app name is missing"
+          PY
 
       - name: Upload the SideStore build
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
