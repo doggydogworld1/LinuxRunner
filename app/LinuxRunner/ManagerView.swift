@@ -1988,9 +1988,9 @@ private struct DesktopControlSettings: View {
                     if captureMouse {
                         Text("With a Bluetooth mouse connected, turn off iOS AssistiveTouch to use capture. Use touch to open these controls and turn capture off.").font(.caption).foregroundColor(.secondary)
                     }
-                    Toggle("Protect Settings and Exit", isOn: $protectControls)
+                    Toggle("Protect Desktop Toolbar", isOn: $protectControls)
                     if protectControls {
-                        Text("Touch and hold the gear or power icon in the desktop toolbar to show its menu.").font(.caption).foregroundColor(.secondary)
+                        Text("Touch and hold a desktop toolbar icon to show its actions.").font(.caption).foregroundColor(.secondary)
                     }
                     Text("Scrolling sensitivity: \(scrollGain, specifier: "%.2g")×").font(.caption)
                     Slider(value: $scrollGain, in: 0.25...4, step: 0.25).accessibilityLabel("Scrolling sensitivity")

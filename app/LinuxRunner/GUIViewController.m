@@ -1017,8 +1017,8 @@ extern int lr_drm_scanout_copy(void *dst, size_t capacity, uint64_t serial, stru
 @property UIButton *dexButton;
 @property UIButton *dockDexButton;
 @property UIMenu *powerMenu;
-@property NSArray<UIButton *> *desktopSettingsButtons;
-@property NSArray<UIButton *> *desktopPowerButtons;
+@property NSMutableArray<void (^)(BOOL)> *desktopProtectionUpdates;
+- (void)protectDesktopButton:(UIButton *)button menu:(UIMenu *)menu action:(void (^)(UIButton *))action;
 @property UIButton *dockFoldButton;
 @property(copy) NSString *linuxClipboard;   // last text Linux put on its CLIPBOARD (RFB ServerCutText)
 @property UIButton *moreButton;
@@ -1367,7 +1367,9 @@ static NSString *DesktopDegradedNotice(NSString *state);
     UIStackView *capturePolicy=[UIStackView new];UILabel *captureHint=[UILabel new];captureHint.text=@"X11 shared images (experimental, next session)";captureHint.font=[UIFont systemFontOfSize:11];captureHint.numberOfLines=2;
     [capturePolicy addArrangedSubview:captureHint];[capturePolicy addArrangedSubview:sharedImages];[_stack addArrangedSubview:capturePolicy];[_compactControls addObject:capturePolicy];
     if(_desktopMode){
-        _immersiveButton=[UIButton buttonWithType:UIButtonTypeSystem];[_immersiveButton setImage:[UIImage systemImageNamed:@"arrow.down.right.and.arrow.up.left"] forState:UIControlStateNormal];_immersiveButton.accessibilityLabel=@"Show Desktop Controls";_immersiveButton.backgroundColor=[UIColor colorWithWhite:.1 alpha:.8];_immersiveButton.layer.cornerRadius=16;_immersiveButton.translatesAutoresizingMaskIntoConstraints=NO;_immersiveButton.hidden=YES;[_immersiveButton addTarget:self action:@selector(toggleImmersive) forControlEvents:UIControlEventTouchUpInside];[self.view addSubview:_immersiveButton];[NSLayoutConstraint activateConstraints:@[[_immersiveButton.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:4],[_immersiveButton.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-8],[_immersiveButton.widthAnchor constraintEqualToConstant:32],[_immersiveButton.heightAnchor constraintEqualToConstant:32]]];
+        _immersiveButton=[UIButton buttonWithType:UIButtonTypeSystem];[_immersiveButton setImage:[UIImage systemImageNamed:@"arrow.down.right.and.arrow.up.left"] forState:UIControlStateNormal];_immersiveButton.accessibilityLabel=@"Show Desktop Controls";_immersiveButton.backgroundColor=[UIColor colorWithWhite:.1 alpha:.8];_immersiveButton.layer.cornerRadius=16;_immersiveButton.translatesAutoresizingMaskIntoConstraints=NO;_immersiveButton.hidden=YES;[self.view addSubview:_immersiveButton];[NSLayoutConstraint activateConstraints:@[[_immersiveButton.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:4],[_immersiveButton.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-8],[_immersiveButton.widthAnchor constraintEqualToConstant:32],[_immersiveButton.heightAnchor constraintEqualToConstant:32]]];
+        __weak typeof(self) weakController=self;
+        [self protectDesktopButton:_immersiveButton menu:nil action:^(UIButton *button){[weakController toggleImmersive];}];
         _inputToolbar.hidden=YES;[self installKeyboardControls];
         LRAddDevBuildBadge(self.view);
         for(UIView *v in _launchControls)v.hidden=YES;for(UIView*v in _compactControls)v.hidden=YES;_status.text=@"Open Desktop starts a real Linux window manager. The first start in an environment installs desktop support automatically (network required).";}
@@ -2261,8 +2263,29 @@ static BOOL LRDesktopControlProtectionEnabled(void){
     page.modalPresentationStyle=UIModalPresentationPageSheet;
     [self presentViewController:page animated:YES completion:nil];
 }
-- (void)desktopSettingsTapped {
-    if(!LRDesktopControlProtectionEnabled())[self openDesktopSettings];
+- (void)protectDesktopButton:(UIButton *)button menu:(UIMenu *)menu action:(void (^)(UIButton *))action{
+    if(!_desktopProtectionUpdates)_desktopProtectionUpdates=[NSMutableArray new];
+    UIMenu *holdMenu=menu;
+    if(action){
+        __weak UIButton *weakButton=button;
+        UIAction *held=[UIAction actionWithTitle:button.accessibilityLabel image:button.currentImage identifier:nil handler:^(UIAction *item){
+            UIButton *control=weakButton;
+            if(control)action(control);
+        }];
+        holdMenu=[UIMenu menuWithChildren:@[held]];
+        [button addAction:[UIAction actionWithHandler:^(UIAction *item){
+            UIButton *control=weakButton;
+            if(control&&!LRDesktopControlProtectionEnabled())action(control);
+        }] forControlEvents:UIControlEventTouchUpInside];
+    }
+    void (^update)(BOOL)=^(BOOL protectionEnabled){
+        button.showsMenuAsPrimaryAction=menu!=nil&&!protectionEnabled;
+        UIMenu *currentMenu=protectionEnabled?holdMenu:menu;
+        if(button.menu!=currentMenu)button.menu=currentMenu;
+        button.accessibilityHint=protectionEnabled?@"Touch and hold to show options.":nil;
+    };
+    [_desktopProtectionUpdates addObject:update];
+    update(LRDesktopControlProtectionEnabled());
 }
 - (void)refreshDesktopControlProtection:(NSNotification *)notification{
     (void)notification;
@@ -2271,41 +2294,25 @@ static BOOL LRDesktopControlProtectionEnabled(void){
         return;
     }
     BOOL protectionEnabled=LRDesktopControlProtectionEnabled();
-    for(UIButton *button in _desktopPowerButtons){
-        button.showsMenuAsPrimaryAction=!protectionEnabled;
-        button.accessibilityHint=protectionEnabled?@"Touch and hold to show exit options.":nil;
-    }
-    for(UIButton *button in _desktopSettingsButtons){
-        button.accessibilityHint=protectionEnabled?@"Touch and hold to show desktop settings.":nil;
-        if(!protectionEnabled){button.menu=nil;continue;}
-        if(button.menu)continue;
-        __weak typeof(self) weak=self;
-        UIAction *open=[UIAction actionWithTitle:@"Open Desktop Settings" image:[UIImage systemImageNamed:@"gearshape"] identifier:nil handler:^(UIAction *action){
-            [weak openDesktopSettings];
-        }];
-        button.menu=[UIMenu menuWithChildren:@[open]];
-    }
+    for(void (^update)(BOOL) in _desktopProtectionUpdates)update(protectionEnabled);
 }
 // DeX, Settings and Power as icon tiles; everything else under "more".
 - (void)installDesktopToolbar{
     __weak typeof(self) weak=self;
     _dexButton=LRSquareButton(@"display",@"DeX Mode",UIColor.systemIndigoColor);_dexButton.accessibilityIdentifier=@"Desktop DeX";
-    [_dexButton addAction:[UIAction actionWithHandler:^(UIAction *a){[weak performDesktopAction:@"touchpad"];[weak refreshDesktopToolbar];}] forControlEvents:UIControlEventTouchUpInside];
+    [self protectDesktopButton:_dexButton menu:nil action:^(UIButton *button){[weak performDesktopAction:@"touchpad"];[weak refreshDesktopToolbar];}];
     UIButton *settings=LRSquareButton(@"gearshape.fill",@"Desktop Settings",UIColor.systemGrayColor);settings.accessibilityIdentifier=@"Desktop Settings";
-    [settings addTarget:self action:@selector(desktopSettingsTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self protectDesktopButton:settings menu:nil action:^(UIButton *button){[weak openDesktopSettings];}];
     UIButton *power=LRSquareButton(@"power",@"Exit",UIColor.systemRedColor);power.accessibilityIdentifier=@"Desktop Power";
     UIAction *stop=[UIAction actionWithTitle:@"Stop Desktop…" image:[UIImage systemImageNamed:@"power"] identifier:nil handler:^(UIAction *a){[weak confirmStopDesktop];}];
     stop.attributes=UIMenuElementAttributesDestructive;
-    power.menu=[UIMenu menuWithTitle:@"Apps keep running when you return to Home." children:@[
+    _powerMenu=[UIMenu menuWithTitle:@"Apps keep running when you return to Home." children:@[
         [UIAction actionWithTitle:@"Return to Home" image:[UIImage systemImageNamed:@"house"] identifier:nil handler:^(UIAction *a){[weak done];}],stop]];
-    power.showsMenuAsPrimaryAction=YES;
-    _desktopSettingsButtons=@[settings];
-    _desktopPowerButtons=@[power];
+    [self protectDesktopButton:power menu:_powerMenu action:nil];
     _moreButton=LRSquareButton(@"ellipsis",@"More Desktop Actions",UIColor.systemBlueColor);_moreButton.accessibilityIdentifier=@"Desktop More";
-    [_moreButton addTarget:self action:@selector(desktopOptions:) forControlEvents:UIControlEventTouchUpInside];
+    [self protectDesktopButton:_moreButton menu:nil action:^(UIButton *button){[weak desktopOptions:button];}];
     UIStackView *row=[[UIStackView alloc] initWithArrangedSubviews:@[_moreButton,_dexButton,settings,power]];row.spacing=8;
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithCustomView:row];
-    _powerMenu=power.menu;   // the dock is built once the surface exists (installKeyboardControls)
     [self refreshDesktopToolbar];
 }
 /// Large labelled controls above the portrait touchpad.
@@ -2338,30 +2345,27 @@ static BOOL LRDesktopControlProtectionEnabled(void){
     __weak typeof(self) weak=self;
     UIColor *white=[UIColor colorWithWhite:1 alpha:.92];
     UIButton *keyboard=[self dockButton:@"keyboard" title:@"Keyboard" tint:white stack:stack];keyboard.accessibilityIdentifier=@"GUI Keyboard";
-    [keyboard addTarget:self action:@selector(tool:) forControlEvents:UIControlEventTouchUpInside];
+    [self protectDesktopButton:keyboard menu:nil action:^(UIButton *button){[weak tool:button];}];
     UIButton *clipboard=[self dockButton:@"doc.on.clipboard" title:@"Clipboard" tint:white stack:stack];clipboard.accessibilityIdentifier=@"Dock Clipboard";
-    clipboard.menu=[self clipboardMenu];clipboard.showsMenuAsPrimaryAction=YES;
+    [self protectDesktopButton:clipboard menu:[self clipboardMenu] action:nil];
     UIButton *dex=[self dockButton:@"display" title:@"DeX Mode" tint:white stack:stack];dex.accessibilityIdentifier=@"Dock DeX";dex.tag=LRDockPortraitOnlyTag;
-    [dex addAction:[UIAction actionWithHandler:^(UIAction *a){[weak performDesktopAction:@"touchpad"];[weak refreshDesktopToolbar];}] forControlEvents:UIControlEventTouchUpInside];
+    [self protectDesktopButton:dex menu:nil action:^(UIButton *button){[weak performDesktopAction:@"touchpad"];[weak refreshDesktopToolbar];}];
     UIButton *settings=[self dockButton:@"gearshape" title:@"Settings" tint:white stack:stack];settings.accessibilityIdentifier=@"Dock Settings";settings.tag=LRDockPortraitOnlyTag;
-    [settings addTarget:self action:@selector(desktopSettingsTapped) forControlEvents:UIControlEventTouchUpInside];
+    [self protectDesktopButton:settings menu:nil action:^(UIButton *button){[weak openDesktopSettings];}];
     UIButton *more=[self dockButton:@"ellipsis.circle" title:@"More" tint:white stack:stack];more.accessibilityIdentifier=@"Dock More";more.tag=LRDockPortraitOnlyTag;
-    [more addAction:[UIAction actionWithHandler:^(UIAction *a){[weak desktopOptions:a.sender];}] forControlEvents:UIControlEventTouchUpInside];
+    [self protectDesktopButton:more menu:nil action:^(UIButton *button){[weak desktopOptions:button];}];
     UIView *divider=[UIView new];divider.tag=LRDockPortraitOnlyTag;divider.backgroundColor=[UIColor colorWithWhite:1 alpha:.22];divider.translatesAutoresizingMaskIntoConstraints=NO;
     [NSLayoutConstraint activateConstraints:@[[divider.widthAnchor constraintEqualToConstant:1],[divider.heightAnchor constraintEqualToConstant:24]]];[stack addArrangedSubview:divider];
     UIButton *power=[self dockButton:@"power" title:@"Exit" tint:[UIColor colorWithRed:1 green:.42 blue:.40 alpha:1] stack:stack];power.accessibilityIdentifier=@"Dock Power";power.tag=LRDockPortraitOnlyTag;
-    power.menu=powerMenu;power.showsMenuAsPrimaryAction=YES;
-    _desktopSettingsButtons=[_desktopSettingsButtons arrayByAddingObject:settings];
-    _desktopPowerButtons=[_desktopPowerButtons arrayByAddingObject:power];
-    [self refreshDesktopControlProtection:nil];
+    [self protectDesktopButton:power menu:powerMenu action:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refreshDesktopControlProtection:) name:NSUserDefaultsDidChangeNotification object:nil];
     // Landscape: fold the pill away; a small handle brings it back.
     UIButton *fold=[self dockButton:@"chevron.up" title:@"Hide Controls" tint:[UIColor colorWithWhite:1 alpha:.6] stack:stack];fold.accessibilityIdentifier=@"Dock Fold";fold.tag=LRDockFoldTag;
-    [fold addAction:[UIAction actionWithHandler:^(UIAction *a){typeof(self) self=weak;self.surface.dockCollapsed=YES;[self.surface setNeedsLayout];}] forControlEvents:UIControlEventTouchUpInside];
+    [self protectDesktopButton:fold menu:nil action:^(UIButton *button){typeof(self) self=weak;self.surface.dockCollapsed=YES;[self.surface setNeedsLayout];}];
     UIButton *handle=[UIButton buttonWithType:UIButtonTypeSystem];handle.accessibilityLabel=@"Show Desktop Controls";handle.accessibilityIdentifier=@"Dock Handle";
     [handle setImage:[UIImage systemImageNamed:@"chevron.compact.down" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:15 weight:UIImageSymbolWeightBold]] forState:UIControlStateNormal];
     handle.tintColor=UIColor.whiteColor;handle.backgroundColor=[UIColor colorWithWhite:.08 alpha:.72];handle.layer.cornerRadius=11;handle.hidden=YES;
-    [handle addAction:[UIAction actionWithHandler:^(UIAction *a){typeof(self) self=weak;self.surface.dockCollapsed=NO;[self.surface setNeedsLayout];}] forControlEvents:UIControlEventTouchUpInside];
+    [self protectDesktopButton:handle menu:nil action:^(UIButton *button){typeof(self) self=weak;self.surface.dockCollapsed=NO;[self.surface setNeedsLayout];}];
     _dockDexButton=dex;_dockFoldButton=fold;
     _surface.dock=dock;_surface.dockHandle=handle;_surface.dockKeyboardButton=keyboard;[_surface addSubview:dock];[_surface addSubview:handle];dock.hidden=YES;
     // The pill carries every desktop control: no navigation bar in the desktop.
@@ -2385,7 +2389,8 @@ static BOOL LRDesktopControlProtectionEnabled(void){
     UIButton *k=[UIButton buttonWithType:UIButtonTypeSystem];k.accessibilityIdentifier=@"GUI Keyboard";k.accessibilityLabel=@"Keyboard";
     [k setImage:[UIImage systemImageNamed:@"keyboard" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:17 weight:UIImageSymbolWeightMedium]] forState:UIControlStateNormal];
     k.tintColor=UIColor.whiteColor;k.backgroundColor=[UIColor colorWithWhite:.18 alpha:.85];k.layer.cornerRadius=11;k.layer.cornerCurve=kCACornerCurveContinuous;
-    [k addTarget:self action:@selector(tool:) forControlEvents:UIControlEventTouchUpInside];
+    __weak typeof(self) weakController=self;
+    [self protectDesktopButton:k menu:nil action:^(UIButton *button){[weakController tool:button];}];
     _surface.keyboardButton=k;[_surface addSubview:k];
     // Desktop: one compact, horizontally scrolling row of Linux keys above the
     // iOS keyboard (the two-row classic layout belongs to the terminal).
