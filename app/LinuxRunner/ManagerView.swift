@@ -731,6 +731,7 @@ struct ManagerView: View {
                 }
                 Picker(selection: $appearance) { Text("Dark").tag("dark"); Text("Light").tag("light"); Text("System").tag("system") } label: { SettingsLabel("Appearance", "circle.lefthalf.filled", .indigo) }
                 Toggle(isOn: $keepScreenAwake) { SettingsLabel("Keep Screen Awake", "sun.max.fill", .orange) }
+                Text("Keeps the screen awake while the desktop is visible or a Linux task is running.").font(.caption).foregroundColor(.secondary)
                 Toggle(isOn: Binding(get: { LongTaskCenter.notificationsEnabled }, set: { LongTaskCenter.notificationsEnabled = $0 })) { SettingsLabel("Notify When Tasks Finish", "bell.badge.fill", .red) }
                 Toggle(isOn: $keepRunningInBackground) { SettingsLabel("Keep Linux Running in Background", "infinity", .green) }
                     .onChange(of: keepRunningInBackground) { BackgroundRunner.shared.apply($0) }

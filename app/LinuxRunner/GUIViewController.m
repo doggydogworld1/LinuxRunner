@@ -1037,9 +1037,10 @@ extern int lr_drm_scanout_copy(void *dst, size_t capacity, uint64_t serial, stru
 @property LRAudioBridge *audio; // session sound; lives as long as the session, not the viewer
 @property uint16_t audioPort;
 @property BOOL viewerVisible;
+@property BOOL holdsDesktopAwake;
 @property NSUUID *storageActivitySource;
 @property BOOL trackpadRequested;
-- (void)updateStorageActivity;
+- (void)updateViewerActivity;
 @end
 enum { LRStartIdle, LRStartChecking, LRStartRepairing, LRStartSession, LRStartFailed };
 // ---- External display (second screen) ----------------------------------
@@ -1243,6 +1244,7 @@ API_AVAILABLE(ios(27.0))
 #include "../../tests/linuxrunner/gui/external_display_contract.inc"
 #endif
 static NSString *DesktopDegradedNotice(NSString *state);
+static NSString *const LRDesktopAwakeReason=@"desktop-viewer";
 @implementation LRGUIViewController
 + (void)registerExternalDisplayForController:(UIViewController *)controller {
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 270000 && !TARGET_OS_MACCATALYST
@@ -1268,7 +1270,7 @@ static NSString *DesktopDegradedNotice(NSString *state);
 - (void)viewDidAppear:(BOOL)animated{[super viewDidAppear:animated];
     _viewerVisible=YES;_surface.presentationSuppressed=_surface.relativeTouchpad;self.directScanoutForceFull=YES;
     [_surface focusKeyboard];
-    [self updateStorageActivity];
+    [self updateViewerActivity];
     if(_surface.latestPixels)[_surface presentPixels:_surface.latestPixels width:_surface.pixelWidth height:_surface.pixelHeight];
     if(_desktopMode)[LRRuntimeBridge desktopTrace:@"02 view" result:@"ok" detail:[NSString stringWithFormat:@"viewDidAppear controller=desktop auto-launch=%d window=%d size=%.0fx%.0f",_autoLaunchPending,self.view.window!=nil,self.view.bounds.size.width,self.view.bounds.size.height]];
     else [LRRuntimeBridge desktopTrace:@"02 view" result:@"info" detail:[NSString stringWithFormat:@"viewDidAppear controller=%@",_launchConfiguration?@"application":@"gui-test"]];
@@ -1282,10 +1284,16 @@ static NSString *DesktopDegradedNotice(NSString *state);
     if(self.presentedViewController&&!self.isBeingDismissed&&!self.navigationController.isBeingDismissed)return;
     _viewerVisible=NO;
     if(_desktopMode){_surface.presentationSuppressed=YES;[_surface.metal clearFrame];_surface.image.image=nil;[self externalDisplayChanged:nil];}
-    [self updateStorageActivity];
+    [self updateViewerActivity];
 }
-- (void)updateStorageActivity {
+- (void)updateViewerActivity {
     BOOL active=_viewerVisible||(_desktopMode&&_client&&[self externalOutputActive]);
+    BOOL desktopAwake=_desktopMode&&active&&!self.appInBackground;
+    if(desktopAwake!=_holdsDesktopAwake){
+        _holdsDesktopAwake=desktopAwake;
+        if(desktopAwake)[LRRuntimeBridge beginAwake:LRDesktopAwakeReason];
+        else [LRRuntimeBridge endAwake:LRDesktopAwakeReason];
+    }
     if(!_storageActivitySource){if(!active)return;_storageActivitySource=[NSUUID UUID];}
     [LRGraphicalActivity.shared setActive:active forSource:_storageActivitySource];
 }
@@ -1306,7 +1314,7 @@ static NSString *DesktopDegradedNotice(NSString *state);
     if(active&&_surface.latestPixels)[LRCurrentExternalDisplay presentFrame:_surface.latestPixels width:_surface.pixelWidth height:_surface.pixelHeight damage:(LRFrameDamage){0,0,_surface.pixelWidth,_surface.pixelHeight}];
     if(active)[_surface refreshExternalCursor];
     [self resumeRequestedTrackpad];
-    [self updateStorageActivity];
+    [self updateViewerActivity];
 }
 - (void)viewDidLoad{
     [super viewDidLoad];if(_desktopMode){[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(externalDisplayChanged:) name:LRExternalDisplayChangedNotification object:nil];[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(externalDisplayChanged:) name:NSUserDefaultsDidChangeNotification object:nil];}[LRRuntimeBridge desktopTrace:@"02 view" result:@"start" detail:[NSString stringWithFormat:@"viewDidLoad controller=%@",_desktopMode?@"desktop":_launchConfiguration?@"application":@"gui-test"]];self.view.backgroundColor=UIColor.systemBackgroundColor;self.title=[LRRuntimeBridge activeEnvironmentIsKali]?@"Kali Applications":[LRRuntimeBridge activeEnvironmentIsUbuntu]?@"Ubuntu Applications":[LRRuntimeBridge activeEnvironmentIsDebian]?@"Debian Applications":[LRRuntimeBridge activeEnvironmentIsArch]?@"Arch Applications":[LRRuntimeBridge activeEnvironmentIsFedora]?@"Fedora Applications":@"Alpine Applications";_frameLock=[NSLock new];_compactControls=[NSMutableArray new];if(_desktopMode)self.title=@"LinuxRunner Desktop";
@@ -1404,7 +1412,14 @@ static NSString *DesktopDegradedNotice(NSString *state);
             }
         }}}];
 }
-- (void)dealloc{NSUUID *source=_storageActivitySource;if(source)dispatch_async(dispatch_get_main_queue(),^{[LRGraphicalActivity.shared setActive:NO forSource:source];});[NSNotificationCenter.defaultCenter removeObserver:self];if(_exitObserver)[NSNotificationCenter.defaultCenter removeObserver:_exitObserver];[_client stop];[_metricsTimer invalidate];[_restartTimer invalidate];}
+- (void)dealloc{
+    if(_holdsDesktopAwake)[LRRuntimeBridge endAwake:LRDesktopAwakeReason];
+    NSUUID *source=_storageActivitySource;
+    if(source)dispatch_async(dispatch_get_main_queue(),^{[LRGraphicalActivity.shared setActive:NO forSource:source];});
+    [NSNotificationCenter.defaultCenter removeObserver:self];
+    if(_exitObserver)[NSNotificationCenter.defaultCenter removeObserver:_exitObserver];
+    [_client stop];[_metricsTimer invalidate];[_restartTimer invalidate];
+}
 - (void)message:(NSString *)text{_status.text=text;[LRRuntimeBridge logCategory:@"GUI" event:text];if(_desktopMode)[LRRuntimeBridge desktopTrace:@"status" result:@"info" detail:text];}
 #if TARGET_OS_SIMULATOR
 - (void)simulatorClose{if(self.viewIfLoaded.window)[self done];}
@@ -2116,7 +2131,7 @@ static NSString *DesktopDegradedNotice(NSString *state){
     if(_desktopMode){[LRRuntimeBridge desktopTrace:@"11 viewer" result:@"ok" detail:[NSString stringWithFormat:@"RFB client created port=%u",port]];
         [LRRuntimeBridge desktopTrace:@"12 renderer" result:_surface?@"ok":@"fail" detail:[NSString stringWithFormat:@"surface=%d metal=%d hidden=%d in-window=%d size=%.0fx%.0f",_surface!=nil,_surface.metal!=nil,_surface.hidden,_surface.window!=nil,_surface.bounds.size.width,_surface.bounds.size.height]];}
     _client=[[LRRFBClient alloc] initWithPort:port password:password];_surface.client=_client;_startedAt=NSDate.date;_frames=0;_bytes=0;_applicationWindowMapped=NO;
-    [self updateStorageActivity];
+    [self updateViewerActivity];
     __weak typeof(self) weak=self;
     __weak LRRFBClient *thisClient=_client;
     _client.patchFrameHandler=^(NSData *patch,uint16_t w,uint16_t h,uint64_t frames,uint64_t bytes,LRFrameDamage damage){
@@ -2229,7 +2244,7 @@ static NSString *DesktopDegradedNotice(NSString *state){
     if(_sessionURL)[[NSData data] writeToURL:[_sessionURL URLByAppendingPathComponent:@"stop"] atomically:YES];
     [self stopDirectScanout];
     [_surface releaseInput];[self resetModifierButtons];[_client stop];_client.frameHandler=nil;_client.damageFrameHandler=nil;_client.patchFrameHandler=nil;_client.statusHandler=nil;_client.cutTextHandler=nil;_client.cursorHandler=nil;_client.pointerPositionHandler=nil;[_surface setCursorShape:nil width:0 height:0 hotX:0 hotY:0];_client=nil;_surface.client=nil;
-    [self updateStorageActivity];
+    [self updateViewerActivity];
     [_metricsTimer invalidate];_metricsTimer=nil;
     [_surface resignFirstResponder];
     [_frameLock lock];_pendingFrame=nil;_pendingDamage=(LRFrameDamage){0};_pendingWidth=_pendingHeight=0;_presentationPending=NO;[_frameLock unlock];
@@ -2426,8 +2441,8 @@ static BOOL LRDesktopControlProtectionEnabled(void){
     _surface.hidden=YES;
 }
 - (void)foreground{if(_desktopMode)[LRRuntimeBridge desktopTrace:@"lifecycle" result:@"info" detail:[NSString stringWithFormat:@"app active start-state=%ld client=%d session-pid=%d",(long)_startState,_client!=nil,_sessionTerminal.sessionPid]];_surface.hidden=NO;self.directScanoutForceFull=YES;if(_viewerVisible)[_surface focusKeyboard];if(_client)[self drainFrameForClient:_client];if(_surface.metal)[_surface.metal setNeedsDisplay];if(_desktopMode&&!_client&&_sessionTerminal.sessionPid>0&&![NSFileManager.defaultManager fileExistsAtPath:[_sessionURL URLByAppendingPathComponent:@"stop"].path])[self connectDesktopViewer];}
-- (void)enteredBackground{self.appInBackground=YES;}
-- (void)leavingBackground{self.appInBackground=NO;self.directScanoutForceFull=YES;[self checkViewerAfterReturn];}
+- (void)enteredBackground{self.appInBackground=YES;[self updateViewerActivity];}
+- (void)leavingBackground{self.appInBackground=NO;[self updateViewerActivity];self.directScanoutForceFull=YES;[self checkViewerAfterReturn];}
 // iOS can tear down the loopback display socket while the app is suspended
 // without the blocking reader ever seeing an error: the picture and input then
 // stay frozen although the desktop runs. On return, ask the display server for
@@ -2461,7 +2476,7 @@ static BOOL LRDesktopControlProtectionEnabled(void){
     [self stopDirectScanout];
     [_surface releaseInput];[self resetModifierButtons];[_surface resignFirstResponder];
     _client.frameHandler=nil;_client.damageFrameHandler=nil;_client.patchFrameHandler=nil;_client.statusHandler=nil;_client.cutTextHandler=nil;_client.cursorHandler=nil;_client.pointerPositionHandler=nil;[_surface setCursorShape:nil width:0 height:0 hotX:0 hotY:0];[_client stop];_client=nil;_surface.client=nil;
-    [self updateStorageActivity];
+    [self updateViewerActivity];
     [_metricsTimer invalidate];_metricsTimer=nil;[_frameLock lock];_pendingFrame=nil;_pendingDamage=(LRFrameDamage){0};_pendingWidth=_pendingHeight=0;_presentationPending=NO;[_frameLock unlock];
     [LRRuntimeBridge logCategory:@"DESKTOP" event:@"viewer detached; owned guest desktop retained within iOS lifecycle limits"];
 }
