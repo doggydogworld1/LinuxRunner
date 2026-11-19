@@ -832,9 +832,26 @@ static const NSInteger LRDockPortraitOnlyTag=7803;   // DeX, Settings, More, Pow
     }
     return YES;
 }
+- (NSString *)captureInputBlockReason {
+    UIWindow *window=self.window;
+    if(!window||self.hidden||window.hidden||window.windowScene.activationState!=UISceneActivationStateForegroundActive)
+        return @"inactive-viewer";
+    if(!_client||!_pixelWidth||!_pixelHeight)return @"no-frame";
+    for(UIResponder *responder=self.nextResponder;responder;responder=responder.nextResponder){
+        if(![responder isKindOfClass:UIViewController.class])continue;
+        UIViewController *controller=(UIViewController *)responder;
+        if(controller.isBeingDismissed)return @"inactive-viewer";
+        UIViewController *presented=controller.presentedViewController;
+        // The desktop itself is presented in a full-screen cover. Only a
+        // presentation outside the desktop's own view tree blocks capture.
+        UIView *presentedView=presented.viewIfLoaded;
+        if(presented&&(!presentedView||![self isDescendantOfView:presentedView]))return @"modal";
+    }
+    return nil;
+}
 - (BOOL)gcPressTargetsSurface {
+    if(lr_pointer_capture_active([self pointerEnvironment]))return [self captureInputBlockReason]==nil;
     if(![self gcInputTargetsViewer])return NO;
-    if(lr_pointer_capture_active([self pointerEnvironment]))return _client!=nil;
     CGRect image=_image.frame;
     CGPoint point=CGPointMake(image.origin.x+(CGFloat)_pointerX/_pixelWidth*image.size.width,
                              image.origin.y+(CGFloat)_pointerY/_pixelHeight*image.size.height);
@@ -855,7 +872,14 @@ static const NSInteger LRDockPortraitOnlyTag=7803;   // DeX, Settings, More, Pow
     [self countInput:@"gc.motion"];
     LRPointerEnvironment e=[self pointerEnvironment];
     if(!lr_pointer_use_gc_motion(e))return;
-    if(lr_pointer_capture_active(e)&&(!_client||![self gcInputTargetsViewer]))return;
+    if(lr_pointer_capture_active(e)){
+        NSString *blocked=[self captureInputBlockReason];
+        if(blocked){
+            [self countInput:[@"gc.capture.motion-blocked." stringByAppendingString:blocked]];
+            return;
+        }
+        [self countInput:@"gc.capture.motion-forwarded"];
+    }
     if(!_pixelWidth||!_pixelHeight)return;
     // Device points to framebuffer pixels at the current zoom; GCMouse reports
     // upward motion as positive y.
@@ -872,7 +896,7 @@ static const NSInteger LRDockPortraitOnlyTag=7803;   // DeX, Settings, More, Pow
 }
 - (void)mouseWheel:(float)y{
     [self countInput:@"gc.scroll"];_lastGCScroll=CACurrentMediaTime();
-    if(lr_pointer_capture_active([self pointerEnvironment])&&(!_client||![self gcInputTargetsViewer]))return;
+    if(lr_pointer_capture_active([self pointerEnvironment])&&[self captureInputBlockReason])return;
     _mouseScroll+=y*lr_input_gain([NSUserDefaults.standardUserDefaults doubleForKey:@"LinuxRunnerInput.scrollGain"],1);
     while(fabs(_mouseScroll)>=1){uint8_t wheel=_mouseScroll>0?8:16;_mouseScroll+=_mouseScroll>0?-1:1;
         [_client pointerX:_pointerX y:_pointerY buttons:_mouseButtons|wheel];[_client pointerX:_pointerX y:_pointerY buttons:_mouseButtons];}
